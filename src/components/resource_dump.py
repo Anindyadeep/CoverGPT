@@ -1,54 +1,58 @@
 import os 
-from pathlib import Path
-from typing import Union
+from typing import Union, Optional
 
 import streamlit as st
-import assemblyai as aai
 from audiorecorder import audiorecorder
+from pydub.audio_segment import AudioSegment
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
 # in app modules import
 from src import logger
+from src.config import CoverGPTConfig
+from src.engine.audio_trascriber import (
+    AssemblyAITranscriberEngine, 
+    WhisperTranscriberEngine
+)
+from src.engine.pdf_to_text import PDF2TextEngine
 
 # TODO:
 # We need of updating the existing information 
+# add instruction in a readme in record_component 
+# Add some description in about_yourself
 
 class ResourceDump:
-    _assemblyai_api_key = os.getenv("ASSEMBLY_AI_API_KEY")
-    aai.settings.api_key = _assemblyai_api_key
-    transcriber = aai.Transcriber()
-
-    # All of these paths will be going inside the config.py
-    audio_save_path=os.path.join("artifacts", "yourself.wav")
-    yourself_text = os.path.join("artifacts", "yourself.text")
-
-    def resume_upload_component(self):
-        """Upload the latest resume"""
+    def upload_resume_and_dump(self) -> int:
+        """Upload the latest resume
+        
+        Returns:
+            The upload status. If 200 then everything is succesful else
+            there is an internal server error
+        """
+        
         st.title("Upload your resume")
-        uploaded_document = st.file_uploader(
+        uploaded_resume = st.file_uploader(
             label="Upload your latest resume",
             type=['.pdf']
         )
-        return uploaded_document
+        if uploaded_resume:
+            file_details = {"Filename": uploaded_resume.name, "Filesize": uploaded_resume.size}
+            st.write("Uploaded File Details:", file_details)
 
-    def update_about_yourself(self):
-        pass
+            pdf_path = CoverGPTConfig.yourself_resume_pdf_path
+            with open(pdf_path, "wb") as pdf_writer:
+                pdf_writer.write(uploaded_resume.getbuffer())
+            st.success("Resume successfully uploaded and saved")
+            return 200
+        else:
+            return 500
 
-    def recoder_component(self, title: str, audio_save_path: Union[str, Path]) -> Union[audiorecorder, None]:
-        # if isinstance(audio_save_path, Path):
-        #     assert audio_save_path.exists(), f"The path: {str(audio_save_path)} does not exists"
-
-        # if isinstance(audio_save_path, str):
-        #     assert os.path.exists(audio_save_path), f"The path: {audio_save_path} does not exists"
-        
-        st.title(f"Record your {title}")
-        audio = audiorecorder(
-            "Click to record",
-            "Click to stop recording"
-        )
-
+    @property
+    def recorder_component(self) -> Union[AudioSegment, None]:
+        st.text("Record yourself")
+        audio = audiorecorder("Click to record", "Click to stop recording")
         if not audio.empty():
             st.audio(audio.export().read())
             return audio 
@@ -56,55 +60,38 @@ class ResourceDump:
             st.write("Audio did not recordeed")
             return None
     
-    def about_yourself(self):
-        # TODO: Add some description 
-        use_audio = st.sidebar.checkbox("Record ")
-        use_text = st.sidebar.checkbox("Write it")
-
-        if use_text:
-            st.text("Write about yourself, don't be shy make yourself at home")
-            text_input = st.text_area(
-                label="",
-                placeholder="Type here ..."
-            )
-            submit_text = st.button(label="submit")
-            if submit_text:
-                # save the text
-                with open(self.yourself_text, "w") as writer:
-                    writer.write(text_input)
-                st.text("Awesome we have recorded your response")
+    def text_writer_component(self):
+        st.text("Write about yourself, don't be shy make yourself at home")
+        text_input = st.text_area(label="", placeholder="Type here ...")
         
-        elif use_audio:
-            recorded_audio = self.recoder_component(title="", audio_save_path=self.audio_save_path)
-            submit_audio = st.button(label="Submit response")
-            
-            # TODO: Move it to config
-            if submit_audio:
-                recorded_audio.export(self.audio_save_path, format="wav")
-                try:
-                    logger.info("Audio transcription process started")
-                    transcript = self.transcriber.transcribe(
-                        self.audio_save_path
+        if submit_text := st.button(label="submit"):
+            with open(CoverGPTConfig.yourself_text_file_path, "w") as writer:
+                writer.write(text_input)
+            st.text("Awesome we have recorded your response")
+        
+    def audio_writer_component(self, transcribe_engine: str):
+        assert transcribe_engine in ['whisper', 'assemblyai'], \
+        "We do not transcriptions engine other than whisper and assemblyai"
+
+        recorded_audio = self.recorder_component
+        if recorded_audio:
+            if submit_audio := st.button(label="Submit response"):
+                recorded_audio.export(CoverGPTConfig.yourself_audio_file_path, format="wav")
+                if transcribe_engine == "whisper":
+                    # TODO: This should be done async through an API 
+                    WhisperTranscriberEngine.transcribe_and_save(
+                        audio_path=CoverGPTConfig.yourself_audio_file_path,
+                        save_path=CoverGPTConfig.yourself_text_file_path
                     )
-
-                    # save the transcript file
-                    # assumption: The user can either use the text or the audio if both are used 
-                    # then the prior used will be deleted
-
-                    with open(self.yourself_text, "w") as audio_transcript_writer:
-                        audio_transcript_writer.write(transcript.text)
-
-                    logger.info(f"Saved transcript file as {self.yourself_text}")
-                    st.text("Awesome we have recorded your response")
-
-                except Exception as e:
-                    logger.warning(
-                        "Audio transcription failed"
-                        f"Exception: {e}" #TODO: provide a custom exception
-                    ) 
-                # TODO: use assembly ai to trascibe this response
+                else:
+                    AssemblyAITranscriberEngine.transcribe_and_save(
+                        audio_path=CoverGPTConfig.yourself_audio_file_path,
+                        save_path=CoverGPTConfig.yourself_text_file_path
+                    )
                 st.text("Awesome we recorded your response")
-
+    
+    def update_about_yourself(self):
+        pass
     
     def upload_research_paper(self):
         # first check whether the user wants to write or wants to record
@@ -121,17 +108,4 @@ class ResourceDump:
 
     def express_interest(self):
         pass
-
-    def main(self):
-        self.resume_upload_component()
-
-        write_it, record_it = st.columns(2)
-        with write_it:
-            check_write = st.radio("Write about yourself")
-            # pass the text box
-        with record_it:
-            check_record = st.radio("Record about yourself")
-        self.about_yourself()
-
-if __name__ == '__main__':
-    resource = ResourceDump().main()
+    

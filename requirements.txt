@@ -2,3 +2,7 @@ streamlit
 ffmpeg
 streamlit-audiorecorder
 openai
+assemblyai
+ffmpeg-python
+PyPDF2
+# pip install git+https://github.com/stlukey/whispercpp.py

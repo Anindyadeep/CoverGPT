@@ -1,0 +1,6 @@
+test.py
+Logs
+src/__pycache__
+src/engine/__pycache__
+src/components/__pycache__
+.env

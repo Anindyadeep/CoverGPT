@@ -1,0 +1,1 @@
+- Have a settings tab with dropdown and it will be saved in a json
